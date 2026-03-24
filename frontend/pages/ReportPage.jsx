@@ -11,18 +11,18 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Default center if browser location is not available
+// Default map center if location is unavailable
 const defaultCenter = [-37.8136, 144.9631];
 
-// Blue dot icon for user's current location
+// Blue dot for user's current location
 const userBlueDotIcon = L.divIcon({
     className: "custom-user-dot-wrapper",
     html: `<div class="custom-user-dot"></div>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
 });
 
-// Normal marker icon for selected incident location
+// Marker for selected incident location
 const selectedLocationIcon = new L.Icon({
     iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
     shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
@@ -30,42 +30,114 @@ const selectedLocationIcon = new L.Icon({
     iconAnchor: [12, 41],
 });
 
-// Component to move map view when center changes
-function RecenterMap({ center, zoom = 15 }) {
+// Fast smooth map movement
+function MapController({ center, zoom, triggerKey }) {
     const map = useMap();
 
     useEffect(() => {
-        if (center) {
-            map.setView(center, zoom, { animate: true });
+        if (!center) return;
+
+        const currentCenter = map.getCenter();
+        const distanceKm =
+            map.distance([currentCenter.lat, currentCenter.lng], center) / 1000;
+
+        let targetZoom = zoom;
+        let duration = 0.35;
+
+        if (distanceKm > 20) {
+            targetZoom = 12;
+            duration = 0.8;
+        } else if (distanceKm > 5) {
+            targetZoom = 13;
+            duration = 0.55;
         }
-    }, [center, zoom, map]);
+
+        map.flyTo(center, targetZoom, {
+            duration,
+            easeLinearity: 1,
+            noMoveStart: true,
+        });
+
+        const timer = setTimeout(() => {
+            map.setView(center, zoom, { animate: false });
+        }, duration * 1000 + 50);
+
+        return () => clearTimeout(timer);
+    }, [center, zoom, triggerKey, map]);
 
     return null;
 }
 
-// Component to let user click map and select incident location
-function LocationPicker({ setForm, selectedPosition }) {
-    useMapEvents({
-        click(e) {
-            const { lat, lng } = e.latlng;
+// Reverse geocoding to auto-fill suburb
+const reverseGeocodeSuburb = async (lat, lng) => {
+    try {
+        const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`
+        );
 
-            // Save clicked location into form
+        const data = await res.json();
+
+        return (
+            data.address?.suburb ||
+            data.address?.town ||
+            data.address?.city_district ||
+            data.address?.city ||
+            data.address?.municipality ||
+            ""
+        );
+    } catch (error) {
+        console.error("Reverse geocoding failed:", error);
+        return "";
+    }
+};
+
+// Distance calculation
+const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
+    const toRad = (value) => (value * Math.PI) / 180;
+
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+};
+
+// Click map to choose incident location
+function LocationPicker({ setForm, selectedPosition, setErrors }) {
+    useMapEvents({
+        async click(e) {
+            const { lat, lng } = e.latlng;
+            const suburbName = await reverseGeocodeSuburb(lat, lng);
+
             setForm((prev) => ({
                 ...prev,
                 latitude: lat,
                 longitude: lng,
+                suburb: suburbName || prev.suburb,
+            }));
+
+            setErrors((prev) => ({
+                ...prev,
+                location: "",
+                suburb: "",
             }));
         },
     });
 
-    // Show marker if incident location is selected
     return selectedPosition ? (
         <Marker position={selectedPosition} icon={selectedLocationIcon} />
     ) : null;
 }
 
 export default function ReportPage() {
-    // Form data
     const [form, setForm] = useState({
         incident_type: "",
         description: "",
@@ -76,33 +148,26 @@ export default function ReportPage() {
         is_anonymous: false,
     });
 
-    // Validation errors
     const [errors, setErrors] = useState({});
-
-    // Success or failure message
     const [message, setMessage] = useState("");
 
-    // User's real current location (blue dot)
     const [userLocation, setUserLocation] = useState(defaultCenter);
-
-    // Whether browser location was successfully found
     const [hasRealLocation, setHasRealLocation] = useState(false);
-
-    // Loading state for GPS
     const [loadingLocation, setLoadingLocation] = useState(true);
-
-    // Error if location access fails
     const [locationError, setLocationError] = useState("");
 
-    // Actual map center position
-    const [mapCenter, setMapCenter] = useState(defaultCenter);
+    const [recenterTarget, setRecenterTarget] = useState(defaultCenter);
+    const [recenterKey, setRecenterKey] = useState(0);
 
-    // Get user location when page loads
     useEffect(() => {
         getUserLocation(true);
     }, []);
 
-    // Get user location from browser
+    const recenterMapTo = (coords) => {
+        setRecenterTarget([...coords]);
+        setRecenterKey((prev) => prev + 1);
+    };
+
     const getUserLocation = (autoCenter = false) => {
         if (!navigator.geolocation) {
             setLocationError("Geolocation is not supported by your browser.");
@@ -120,14 +185,12 @@ export default function ReportPage() {
                     position.coords.longitude,
                 ];
 
-                // Save user's location for blue dot
                 setUserLocation(coords);
                 setHasRealLocation(true);
                 setLoadingLocation(false);
 
-                // Move map there if needed
                 if (autoCenter) {
-                    setMapCenter([...coords]);
+                    recenterMapTo(coords);
                 }
             },
             (error) => {
@@ -153,18 +216,14 @@ export default function ReportPage() {
         );
     };
 
-    // Button 1:
-    // Only move the map view back to user's current location
-    // This does NOT change form latitude/longitude
+    // Only move map back to current user location
     const handleRecenterMap = () => {
         if (hasRealLocation) {
-            setMapCenter([...userLocation]);
+            recenterMapTo(userLocation);
         }
     };
 
-    // Button 2:
-    // Use current browser location as incident location
-    // This updates form latitude/longitude and centers map
+    // Use current user location as incident location
     const handleUseMyCurrentLocation = () => {
         if (!navigator.geolocation) {
             setLocationError("Geolocation is not supported by your browser.");
@@ -175,30 +234,30 @@ export default function ReportPage() {
         setLocationError("");
 
         navigator.geolocation.getCurrentPosition(
-            (position) => {
+            async (position) => {
                 const lat = position.coords.latitude;
                 const lng = position.coords.longitude;
                 const coords = [lat, lng];
 
-                // Update user blue dot location
+                const suburbName = await reverseGeocodeSuburb(lat, lng);
+
                 setUserLocation(coords);
                 setHasRealLocation(true);
                 setLoadingLocation(false);
 
-                // Save current location into form as incident location
                 setForm((prev) => ({
                     ...prev,
                     latitude: lat,
                     longitude: lng,
+                    suburb: suburbName || prev.suburb,
                 }));
 
-                // Center map to this location
-                setMapCenter([...coords]);
+                recenterMapTo(coords);
 
-                // Clear location error if any
                 setErrors((prev) => ({
                     ...prev,
                     location: "",
+                    suburb: "",
                 }));
             },
             (error) => {
@@ -223,7 +282,6 @@ export default function ReportPage() {
         );
     };
 
-    // Handle text/select/checkbox changes
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
 
@@ -232,7 +290,6 @@ export default function ReportPage() {
             [name]: type === "checkbox" ? checked : value,
         }));
 
-        // Clear field errors when typing
         setErrors((prev) => ({
             ...prev,
             [name]: "",
@@ -242,7 +299,6 @@ export default function ReportPage() {
         setMessage("");
     };
 
-    // Frontend validation
     const validateForm = () => {
         const newErrors = {};
 
@@ -269,7 +325,6 @@ export default function ReportPage() {
         return newErrors;
     };
 
-    // Submit form to backend
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -291,7 +346,6 @@ export default function ReportPage() {
             setMessage(res.data.message || "Report submitted successfully");
             setErrors({});
 
-            // Reset form after success
             setForm({
                 incident_type: "",
                 description: "",
@@ -302,27 +356,34 @@ export default function ReportPage() {
                 is_anonymous: false,
             });
 
-            // Recenter map to user location after submit
             if (hasRealLocation) {
-                setMapCenter([...userLocation]);
+                recenterMapTo(userLocation);
             } else {
-                setMapCenter([...defaultCenter]);
+                recenterMapTo(defaultCenter);
             }
         } catch (error) {
             setMessage(error.response?.data?.message || "Failed to submit report");
         }
     };
 
-    // Selected incident position for marker
     const selectedPosition =
         form.latitude !== "" && form.longitude !== ""
             ? [Number(form.latitude), Number(form.longitude)]
             : null;
 
+    const distanceFromUser =
+        hasRealLocation && selectedPosition
+            ? calculateDistanceKm(
+                userLocation[0],
+                userLocation[1],
+                selectedPosition[0],
+                selectedPosition[1]
+            )
+            : null;
+
     return (
         <div className="max-w-3xl mx-auto">
             <div className="bg-white rounded-2xl shadow-lg p-8">
-                {/* Page heading */}
                 <div className="mb-6">
                     <h2 className="text-3xl font-bold text-slate-800 mb-2">
                         Report an Incident
@@ -333,14 +394,12 @@ export default function ReportPage() {
                     </p>
                 </div>
 
-                {/* Success or failure message */}
                 {message && (
                     <div className="mb-6 rounded-lg bg-blue-100 text-blue-800 px-4 py-3">
                         {message}
                     </div>
                 )}
 
-                {/* Browser location errors */}
                 {locationError && (
                     <div className="mb-6 rounded-lg bg-amber-100 text-amber-800 px-4 py-3">
                         {locationError}
@@ -348,7 +407,6 @@ export default function ReportPage() {
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Incident type */}
                     <div>
                         <label className="block mb-2 font-medium">Incident Type</label>
                         <select
@@ -369,7 +427,6 @@ export default function ReportPage() {
                         )}
                     </div>
 
-                    {/* Description */}
                     <div>
                         <label className="block mb-2 font-medium">Description</label>
                         <textarea
@@ -384,14 +441,13 @@ export default function ReportPage() {
                         )}
                     </div>
 
-                    {/* Suburb */}
                     <div>
                         <label className="block mb-2 font-medium">Suburb</label>
                         <input
                             name="suburb"
                             value={form.suburb}
                             onChange={handleChange}
-                            placeholder="e.g. Melbourne"
+                            placeholder="Suburb will auto-fill when you select a location"
                             className="w-full border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-cyan-500"
                         />
                         {errors.suburb && (
@@ -399,7 +455,6 @@ export default function ReportPage() {
                         )}
                     </div>
 
-                    {/* Incident time */}
                     <div>
                         <label className="block mb-2 font-medium">Incident Time</label>
                         <input
@@ -414,74 +469,71 @@ export default function ReportPage() {
                         )}
                     </div>
 
-                    {/* Map section */}
                     <div>
                         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-2">
                             <label className="block font-medium">Select Incident Location</label>
 
                             <div className="flex gap-3 flex-wrap">
-                                {/* Button 1: only recenter map */}
                                 <button
                                     type="button"
                                     onClick={handleRecenterMap}
-                                    className="inline-flex items-center justify-center rounded-xl bg-slate-700 px-4 py-2 text-white font-medium shadow hover:bg-slate-800 transition"
+                                    className="btn-secondary"
                                 >
                                     Recenter Map
                                 </button>
 
-                                {/* Button 2: use user current location as incident location */}
                                 <button
                                     type="button"
                                     onClick={handleUseMyCurrentLocation}
-                                    className="inline-flex items-center justify-center rounded-xl bg-cyan-600 px-4 py-2 text-white font-medium shadow hover:bg-cyan-700 transition"
+                                    className="btn-primary"
                                 >
                                     {loadingLocation ? "Locating..." : "Use My Current Location"}
                                 </button>
                             </div>
                         </div>
 
-                        {/* Leaflet map */}
-                        <div className="rounded-xl overflow-hidden border border-slate-300">
+                        <div className="relative z-0 rounded-xl overflow-hidden border border-slate-300">
                             <MapContainer
-                                center={mapCenter}
+                                center={defaultCenter}
                                 zoom={13}
                                 scrollWheelZoom={true}
-                                style={{ height: "350px", width: "100%" }}
+                                className="h-[420px] md:h-[500px] w-full"
                             >
                                 <TileLayer
                                     attribution="&copy; OpenStreetMap contributors"
                                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                                 />
 
-                                {/* Recenter helper */}
-                                <RecenterMap center={mapCenter} zoom={15} />
+                                <MapController
+                                    center={recenterTarget}
+                                    zoom={15}
+                                    triggerKey={recenterKey}
+                                />
 
-                                {/* Show user's current location as blue dot */}
                                 {hasRealLocation && (
                                     <>
-                                        <Marker position={userLocation} icon={userBlueDotIcon} />
                                         <Circle
                                             center={userLocation}
-                                            radius={60}
+                                            radius={70}
                                             pathOptions={{
-                                                color: "#2563eb",
-                                                fillColor: "#60a5fa",
-                                                fillOpacity: 0.2,
+                                                color: "#60a5fa",
+                                                fillColor: "#93c5fd",
+                                                fillOpacity: 0.22,
                                                 weight: 1,
                                             }}
                                         />
+                                        <Marker position={userLocation} icon={userBlueDotIcon} />
                                     </>
                                 )}
 
-                                {/* Let user pick incident location by clicking */}
                                 <LocationPicker
                                     setForm={setForm}
                                     selectedPosition={selectedPosition}
+                                    setErrors={setErrors}
                                 />
                             </MapContainer>
                         </div>
 
-                        {/* Show selected coordinates */}
                         {selectedPosition && (
                             <p className="text-sm text-slate-600 mt-2">
                                 Selected coordinates: {Number(form.latitude).toFixed(6)},{" "}
@@ -489,13 +541,18 @@ export default function ReportPage() {
                             </p>
                         )}
 
-                        {/* Validation error for map location */}
+                        {distanceFromUser !== null && (
+                            <p className="text-sm text-slate-600 mt-1">
+                                Distance from your current location:{" "}
+                                {distanceFromUser.toFixed(2)} km
+                            </p>
+                        )}
+
                         {errors.location && (
                             <p className="text-red-500 text-sm mt-1">{errors.location}</p>
                         )}
                     </div>
 
-                    {/* Anonymous checkbox */}
                     <div className="flex items-center gap-3">
                         <input
                             type="checkbox"
@@ -507,7 +564,6 @@ export default function ReportPage() {
                         <label className="font-medium">Submit anonymously</label>
                     </div>
 
-                    {/* Submit button */}
                     <button
                         type="submit"
                         className="w-full bg-slate-900 text-white py-3 rounded-lg font-semibold hover:bg-slate-800 transition"
