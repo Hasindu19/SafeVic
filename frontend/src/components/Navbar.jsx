@@ -32,6 +32,13 @@ export default function Navbar() {
                         </Link>
                     )}
 
+                    {user && (
+                        <Link to="/my-reports" className={navLinkClass("/my-reports")}>
+                            My Reports
+                        </Link>
+                    )}
+
+
                     {user && ["council", "police_admin"].includes(user.role) && (
                         <Link to="/dashboard" className={navLinkClass("/dashboard")}>
                             Dashboard

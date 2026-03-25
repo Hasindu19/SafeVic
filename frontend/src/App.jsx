@@ -7,6 +7,7 @@ import IncidentDetailsPage from "./pages/IncidentDetailsPage";
 
 import LoginPage from "./pages/LoginPage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import MyReportsPage from "./pages/MyReportsPage";
 
 function App() {
     return (
@@ -20,6 +21,14 @@ function App() {
                         element={
                             <ProtectedRoute allowedRoles={["community", "council", "police_admin"]}>
                                 <ReportPage />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/my-reports"
+                        element={
+                            <ProtectedRoute allowedRoles={["community", "council", "police_admin"]}>
+                                <MyReportsPage />
                             </ProtectedRoute>
                         }
                     />
