@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import api from "../services/api";
+import { useNavigate, Link } from "react-router-dom";
+import api from "../services/api.js";
 import {
     MapContainer,
     TileLayer,
@@ -12,6 +12,7 @@ import {
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+
 
 const defaultCenter = [-37.8136, 144.9631];
 
@@ -433,17 +434,30 @@ export default function MapPage() {
                                         }
                                     >
                                         <Popup>
-                                            <div className="space-y-1">
+                                            <div className="w-[190px] space-y-2 px-0.5 text-center">
                                                 <p className="font-semibold text-slate-900">
                                                     {report.incident_type}
                                                 </p>
-                                                <p className="text-slate-700">{report.suburb}</p>
+
+                                                <p className="text-sm text-slate-700">
+                                                    {report.suburb}
+                                                </p>
+
                                                 <p className="text-sm text-slate-500">
                                                     {report.description}
                                                 </p>
-                                                <p className="pt-1 text-xs uppercase tracking-wide text-slate-400">
+
+                                                <p className="text-xs uppercase tracking-wide text-slate-400">
                                                     Status: {report.status}
                                                 </p>
+
+                                                <Link
+                                                    to={`/incidents/${report.id}`}
+                                                    className="mt-2 flex w-full items-center justify-center rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-3 py-2 text-sm font-semibold shadow transition duration-200 hover:from-cyan-700 hover:to-blue-700 hover:shadow-lg"
+                                                    style={{ color: "#ffffff", textDecoration: "none" }}
+                                                >
+                                                    View Details
+                                                </Link>
                                             </div>
                                         </Popup>
                                     </Marker>

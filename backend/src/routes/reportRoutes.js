@@ -4,9 +4,13 @@ const router = express.Router();
 const {
     createReport,
     getReports,
+    getReportById,
 } = require("../controllers/reportController");
 
-router.post("/", createReport);
+const { protect } = require("../middleware/authMiddleware");
+
+router.post("/", protect, createReport);
 router.get("/", getReports);
+router.get("/:id", getReportById);
 
 module.exports = router;

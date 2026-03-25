@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import api from "../services/api.js";
 import {
     MapContainer,
     TileLayer,
@@ -337,11 +337,21 @@ export default function ReportPage() {
         }
 
         try {
-            const res = await api.post("/reports", {
-                ...form,
-                latitude: Number(form.latitude),
-                longitude: Number(form.longitude),
-            });
+            const token = localStorage.getItem("safevic_token");
+
+            const res = await api.post(
+                "/reports",
+                {
+                    ...form,
+                    latitude: Number(form.latitude),
+                    longitude: Number(form.longitude),
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                }
+            );
 
             setMessage(res.data.message || "Report submitted successfully");
             setErrors({});

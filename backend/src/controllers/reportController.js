@@ -12,6 +12,8 @@ const createReport = async (req, res) => {
             is_anonymous,
         } = req.body;
 
+        const user_id = req.user.id; // comes from JWT middleware
+
         if (
             !incident_type ||
             !description ||
@@ -31,26 +33,26 @@ const createReport = async (req, res) => {
 
         if (Number.isNaN(lat) || lat < -90 || lat > 90) {
             return res.status(400).json({
-                message: "Latitude must be a valid number between -90 and 90",
+                message: "Latitude must be between -90 and 90",
             });
         }
 
         if (Number.isNaN(lng) || lng < -180 || lng > 180) {
             return res.status(400).json({
-                message: "Longitude must be a valid number between -180 and 180",
+                message: "Longitude must be between -180 and 180",
             });
         }
 
         if (Number.isNaN(date.getTime())) {
             return res.status(400).json({
-                message: "Incident time must be a valid date/time",
+                message: "Incident time must be valid",
             });
         }
 
         const result = await pool.query(
-            `INSERT INTO reports 
-       (incident_type, description, suburb, latitude, longitude, incident_time, is_anonymous)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO reports
+       (incident_type, description, suburb, latitude, longitude, incident_time, is_anonymous, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
             [
                 incident_type.trim(),
@@ -60,6 +62,7 @@ const createReport = async (req, res) => {
                 lng,
                 incident_time,
                 is_anonymous ?? false,
+                user_id,
             ]
         );
 
@@ -91,7 +94,31 @@ const getReports = async (req, res) => {
     }
 };
 
+const getReportById = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const result = await pool.query(
+            "SELECT * FROM reports WHERE id = $1",
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Report not found" });
+        }
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error("GET REPORT BY ID ERROR:", error);
+        res.status(500).json({
+            message: "Server error",
+            error: error.message,
+        });
+    }
+};
+
 module.exports = {
     createReport,
     getReports,
+    getReportById,
 };
