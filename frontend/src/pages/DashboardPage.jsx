@@ -1,256 +1,311 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api.js";
-import {
-    BarChart,
-    Bar,
-    XAxis,
-    YAxis,
-    CartesianGrid,
-    Tooltip,
-    ResponsiveContainer,
-    PieChart,
-    Pie,
-    Cell,
-} from "recharts";
-
-const PIE_COLORS = ["#06b6d4", "#3b82f6", "#8b5cf6", "#f59e0b", "#22c55e", "#ef4444"];
+import { Link, useNavigate } from "react-router-dom";
+import api from "../services/api";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function DashboardPage() {
-    const [reports, setReports] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState("");
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const { logout } = useAuth();
 
-    useEffect(() => {
-        fetchReports();
-    }, []);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [suburbFilter, setSuburbFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("newest");
 
+  useEffect(() => {
     const fetchReports = async () => {
-        try {
-            const res = await api.get("/reports");
-            setReports(res.data);
-            setLoading(false);
-        } catch (error) {
-            console.error("Failed to fetch reports:", error);
-            setError("Failed to load dashboard data");
-            setLoading(false);
+      try {
+        const res = await api.get("/reports");
+        setReports(res.data);
+        setLoading(false);
+      } catch (error) {
+        console.error("Failed to fetch reports:", error);
+
+        if (error.response?.status === 401) {
+          logout();
+          navigate("/login", { replace: true });
+          return;
         }
+
+        setError(error.response?.data?.message || "Failed to load dashboard data");
+        setLoading(false);
+      }
     };
 
-    const stats = useMemo(() => {
-        const now = new Date();
-        const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    fetchReports();
+  }, [logout, navigate]);
 
-        const totalIncidents = reports.length;
-        const last24hIncidents = reports.filter(
-            (report) => new Date(report.created_at) >= last24Hours
-        ).length;
-        const anonymousReports = reports.filter((report) => report.is_anonymous).length;
-        const resolvedReports = reports.filter(
-            (report) => report.status?.toLowerCase() === "resolved"
-        ).length;
+  const incidentTypes = useMemo(() => {
+    return [...new Set(reports.map((r) => r.incident_type).filter(Boolean))];
+  }, [reports]);
 
-        const categoryMap = {};
-        const suburbMap = {};
+  const suburbs = useMemo(() => {
+    return [...new Set(reports.map((r) => r.suburb).filter(Boolean))];
+  }, [reports]);
 
-        reports.forEach((report) => {
-            const category = report.incident_type || "Unknown";
-            const suburb = report.suburb || "Unknown";
+  const filteredReports = useMemo(() => {
+    let data = [...reports];
 
-            categoryMap[category] = (categoryMap[category] || 0) + 1;
-            suburbMap[suburb] = (suburbMap[suburb] || 0) + 1;
-        });
+    if (search.trim()) {
+      const q = search.toLowerCase();
 
-        const incidentsByCategory = Object.entries(categoryMap).map(([name, value]) => ({
-            name,
-            value,
-        }));
-
-        const incidentsBySuburb = Object.entries(suburbMap)
-            .map(([name, value]) => ({
-                name,
-                value,
-            }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 8);
-
-        const recentIncidents = [...reports]
-            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-            .slice(0, 8);
-
-        return {
-            totalIncidents,
-            last24hIncidents,
-            anonymousReports,
-            resolvedReports,
-            incidentsByCategory,
-            incidentsBySuburb,
-            recentIncidents,
-        };
-    }, [reports]);
-
-    if (loading) {
-        return <div className="text-slate-600">Loading dashboard...</div>;
+      data = data.filter((report) =>
+        [
+          report.incident_type,
+          report.suburb,
+          report.description,
+          report.status,
+          String(report.id),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
+      );
     }
 
-    if (error) {
-        return <div className="text-red-600">{error}</div>;
+    if (typeFilter !== "all") {
+      data = data.filter((report) => report.incident_type === typeFilter);
     }
 
-    return (
-        <div className="space-y-6">
-            <section className="card p-7">
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-600">
-                    Safety Analytics
-                </p>
-                <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-900">
-                    Dashboard Overview
-                </h1>
-                <p className="mt-3 max-w-2xl text-slate-500">
-                    Monitor incident trends, reporting activity, and suburb-level safety insights.
-                </p>
-            </section>
+    if (suburbFilter !== "all") {
+      data = data.filter((report) => report.suburb === suburbFilter);
+    }
 
-            <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="card p-6">
-                    <p className="text-sm text-slate-500">Total Incidents</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900">
-                        {stats.totalIncidents}
-                    </p>
-                </div>
+    data.sort((a, b) => {
+      if (sortBy === "newest") {
+        return new Date(b.created_at) - new Date(a.created_at);
+      }
 
-                <div className="card p-6">
-                    <p className="text-sm text-slate-500">Last 24 Hours</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900">
-                        {stats.last24hIncidents}
-                    </p>
-                </div>
+      if (sortBy === "oldest") {
+        return new Date(a.created_at) - new Date(b.created_at);
+      }
 
-                <div className="card p-6">
-                    <p className="text-sm text-slate-500">Anonymous Reports</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900">
-                        {stats.anonymousReports}
-                    </p>
-                </div>
+      if (sortBy === "type_az") {
+        return (a.incident_type || "").localeCompare(b.incident_type || "");
+      }
 
-                <div className="card p-6">
-                    <p className="text-sm text-slate-500">Resolved Reports</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900">
-                        {stats.resolvedReports}
-                    </p>
-                </div>
-            </section>
+      if (sortBy === "type_za") {
+        return (b.incident_type || "").localeCompare(a.incident_type || "");
+      }
 
-            <section className="grid gap-6 xl:grid-cols-2">
-                <div className="card p-6">
-                    <h2 className="text-xl font-semibold text-slate-900">
-                        Incidents by Category
-                    </h2>
-                    <p className="mt-1 text-slate-500">
-                        Distribution of reported incident types.
-                    </p>
+      if (sortBy === "suburb_az") {
+        return (a.suburb || "").localeCompare(b.suburb || "");
+      }
 
-                    <div className="mt-6 h-[320px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={stats.incidentsByCategory}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                                <YAxis allowDecimals={false} />
-                                <Tooltip />
-                                <Bar dataKey="value" radius={[8, 8, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
+      if (sortBy === "suburb_za") {
+        return (b.suburb || "").localeCompare(a.suburb || "");
+      }
 
-                <div className="card p-6">
-                    <h2 className="text-xl font-semibold text-slate-900">
-                        Incidents by Suburb
-                    </h2>
-                    <p className="mt-1 text-slate-500">
-                        Top suburbs with the highest number of reported incidents.
-                    </p>
+      return 0;
+    });
 
-                    <div className="mt-6 h-[320px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={stats.incidentsBySuburb}
-                                    dataKey="value"
-                                    nameKey="name"
-                                    outerRadius={110}
-                                    innerRadius={55}
-                                    paddingAngle={3}
-                                    label
-                                >
-                                    {stats.incidentsBySuburb.map((entry, index) => (
-                                        <Cell
-                                            key={`cell-${index}`}
-                                            fill={PIE_COLORS[index % PIE_COLORS.length]}
-                                        />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-            </section>
+    return data;
+  }, [reports, search, typeFilter, suburbFilter, sortBy]);
 
-            <section className="card overflow-hidden">
-                <div className="border-b border-slate-200 px-6 py-5">
-                    <h2 className="text-xl font-semibold text-slate-900">
-                        Recent Incidents
-                    </h2>
-                    <p className="mt-1 text-slate-500">
-                        Latest reports submitted to the platform.
-                    </p>
-                </div>
+  const stats = useMemo(() => {
+    const now = new Date();
+    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-                <div className="overflow-x-auto">
-                    <table className="min-w-full">
-                        <thead className="bg-slate-50">
-                        <tr className="text-left text-sm text-slate-500">
-                            <th className="px-6 py-4 font-medium">ID</th>
-                            <th className="px-6 py-4 font-medium">Type</th>
-                            <th className="px-6 py-4 font-medium">Suburb</th>
-                            <th className="px-6 py-4 font-medium">Status</th>
-                            <th className="px-6 py-4 font-medium">Created</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {stats.recentIncidents.length > 0 ? (
-                            stats.recentIncidents.map((report) => (
-                                <tr
-                                    key={report.id}
-                                    className="border-t border-slate-100 text-sm text-slate-700"
-                                >
-                                    <td className="px-6 py-4">{report.id}</td>
-                                    <td className="px-6 py-4 font-medium">{report.incident_type}</td>
-                                    <td className="px-6 py-4">{report.suburb}</td>
-                                    <td className="px-6 py-4">
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+    return {
+      total: reports.length,
+      last24h: reports.filter((r) => new Date(r.created_at) >= last24Hours)
+        .length,
+      pending: reports.filter((r) => r.status === "pending").length,
+      resolved: reports.filter((r) => r.status === "resolved").length,
+    };
+  }, [reports]);
+
+  if (loading) {
+    return <div className="text-slate-600">Loading dashboard...</div>;
+  }
+
+  if (error) {
+    return <div className="text-red-600">{error}</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="card p-7">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-600">
+          Police Admin Dashboard
+        </p>
+        <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-900">
+          Incident Management
+        </h1>
+        <p className="mt-3 max-w-2xl text-slate-500">
+          Search, filter, sort, and review submitted incident reports.
+        </p>
+      </section>
+
+      <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="card p-6">
+          <p className="text-sm text-slate-500">Total Incidents</p>
+          <p className="mt-3 text-4xl font-bold text-slate-900">
+            {stats.total}
+          </p>
+        </div>
+
+        <div className="card p-6">
+          <p className="text-sm text-slate-500">Last 24 Hours</p>
+          <p className="mt-3 text-4xl font-bold text-slate-900">
+            {stats.last24h}
+          </p>
+        </div>
+
+        <div className="card p-6">
+          <p className="text-sm text-slate-500">Pending</p>
+          <p className="mt-3 text-4xl font-bold text-slate-900">
+            {stats.pending}
+          </p>
+        </div>
+
+        <div className="card p-6">
+          <p className="text-sm text-slate-500">Resolved</p>
+          <p className="mt-3 text-4xl font-bold text-slate-900">
+            {stats.resolved}
+          </p>
+        </div>
+      </section>
+
+      <section className="card p-6">
+        <div className="grid gap-4 lg:grid-cols-4">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search reports..."
+            className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
+          />
+
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
+          >
+            <option value="all">All Types</option>
+            {incidentTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={suburbFilter}
+            onChange={(e) => setSuburbFilter(e.target.value)}
+            className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
+          >
+            <option value="all">All Suburbs</option>
+            {suburbs.map((suburb) => (
+              <option key={suburb} value={suburb}>
+                {suburb}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
+          >
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+            <option value="type_az">Type A-Z</option>
+            <option value="type_za">Type Z-A</option>
+            <option value="suburb_az">Suburb A-Z</option>
+            <option value="suburb_za">Suburb Z-A</option>
+          </select>
+        </div>
+
+        <p className="mt-4 text-sm text-slate-500">
+          Showing {filteredReports.length} of {reports.length} reports.
+        </p>
+      </section>
+
+      <section className="card overflow-hidden">
+        <div className="border-b border-slate-200 px-6 py-5">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Incident Records
+          </h2>
+          <p className="mt-1 text-slate-500">
+            Police admins can open each record to review and update status.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-sm text-slate-500">
+                <th className="px-6 py-4 font-medium">ID</th>
+                <th className="px-6 py-4 font-medium">Type</th>
+                <th className="px-6 py-4 font-medium">Suburb</th>
+                <th className="px-6 py-4 font-medium">Status</th>
+                <th className="px-6 py-4 font-medium">Date</th>
+                <th className="px-6 py-4 font-medium">Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredReports.length > 0 ? (
+                filteredReports.map((report) => (
+                  <tr
+                    key={report.id}
+                    className="border-t border-slate-100 text-sm text-slate-700"
+                  >
+                    <td className="px-6 py-4">{report.id}</td>
+
+                    <td className="px-6 py-4 font-medium">
+                      {report.incident_type}
+                    </td>
+
+                    <td className="px-6 py-4">{report.suburb}</td>
+
+                    <td className="px-6 py-4">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                          report.status === "resolved"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : report.status === "under_review"
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
                         {report.status}
                       </span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        {new Date(report.created_at).toLocaleString()}
-                                    </td>
-                                </tr>
-                            ))
-                        ) : (
-                            <tr>
-                                <td
-                                    colSpan="5"
-                                    className="px-6 py-8 text-center text-slate-500"
-                                >
-                                    No incident data available.
-                                </td>
-                            </tr>
-                        )}
-                        </tbody>
-                    </table>
-                </div>
-            </section>
+                    </td>
+
+                    <td className="px-6 py-4">
+                      {new Date(report.created_at).toLocaleString()}
+                    </td>
+
+                    <td className="px-6 py-4">
+                      <Link
+                        to={`/incidents/${report.id}`}
+                        className="inline-flex items-center justify-center rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-sm font-semibold shadow transition hover:from-cyan-700 hover:to-blue-700 hover:shadow-lg"
+                        style={{ color: "#ffffff", textDecoration: "none" }}
+                      >
+                        View Details
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td
+                    colSpan="6"
+                    className="px-6 py-8 text-center text-slate-500"
+                  >
+                    No matching reports found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-    );
+      </section>
+    </div>
+  );
 }

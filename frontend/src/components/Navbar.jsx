@@ -46,9 +46,14 @@ export default function Navbar() {
                     )}
 
                     {!user ? (
-                        <Link to="/login" className={navLinkClass("/login")}>
-                            Login
-                        </Link>
+                        <>
+                            <Link to="/login" className={navLinkClass("/login")}>
+                                Login
+                            </Link>
+                            <Link to="/signup" className={navLinkClass("/signup")}>
+                                Sign Up
+                            </Link>
+                        </>
                     ) : (
                         <button
                             onClick={logout}

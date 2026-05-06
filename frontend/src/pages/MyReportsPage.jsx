@@ -1,34 +1,38 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function MyReportsPage() {
     const [reports, setReports] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const navigate = useNavigate();
+    const { logout } = useAuth();
 
     useEffect(() => {
+        const fetchMyReports = async () => {
+            try {
+                const res = await api.get("/reports/mine");
+
+                setReports(res.data);
+                setLoading(false);
+            } catch (error) {
+                console.error(error);
+
+                if (error.response?.status === 401) {
+                    logout();
+                    navigate("/login", { replace: true });
+                    return;
+                }
+
+                setError(error.response?.data?.message || "Failed to load your reports");
+                setLoading(false);
+            }
+        };
+
         fetchMyReports();
-    }, []);
-
-    const fetchMyReports = async () => {
-        try {
-            const token = localStorage.getItem("safevic_token");
-
-            const res = await api.get("/reports/mine", {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            });
-
-            setReports(res.data);
-            setLoading(false);
-        } catch (error) {
-            console.error(error);
-            setError("Failed to load your reports");
-            setLoading(false);
-        }
-    };
+    }, [logout, navigate]);
 
     if (loading) {
         return <div className="text-slate-600">Loading your reports...</div>;

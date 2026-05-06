@@ -136,9 +136,47 @@ const getMyReports = async (req, res) => {
     }
 };
 
+const updateReportStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const allowedStatuses = ["pending", "under_review", "resolved"];
+
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({
+                message: "Invalid status value",
+            });
+        }
+
+        const result = await pool.query(
+            "UPDATE reports SET status = $1 WHERE id = $2 RETURNING *",
+            [status, id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Report not found",
+            });
+        }
+
+        res.json({
+            message: "Status updated successfully",
+            report: result.rows[0],
+        });
+    } catch (error) {
+        console.error("UPDATE STATUS ERROR:", error);
+        res.status(500).json({
+            message: "Server error",
+            error: error.message,
+        });
+    }
+};
+
 module.exports = {
     createReport,
     getReports,
     getReportById,
     getMyReports,
+    updateReportStatus,
 };
