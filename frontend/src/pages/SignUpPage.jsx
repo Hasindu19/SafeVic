@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api.js";
 
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function SignupPage() {
     const [form, setForm] = useState({
         name: "",
@@ -36,16 +38,26 @@ export default function SignupPage() {
 
         if (!form.email.trim()) {
             newErrors.email = "Email is required";
+        } else if (!emailRegex.test(form.email.trim())) {
+            newErrors.email = "Enter a valid email address";
         }
 
         if (!form.password) {
             newErrors.password = "Password is required";
         } else if (form.password.length < 6) {
             newErrors.password = "Password must be at least 6 characters";
+        } else if (!/[A-Z]/.test(form.password)) {
+            newErrors.password = "Must include at least 1 uppercase letter";
+        } else if (!/[a-z]/.test(form.password)) {
+            newErrors.password = "Must include at least 1 lowercase letter";
+        } else if (!/[0-9]/.test(form.password)) {
+            newErrors.password = "Must include at least 1 number";
         }
 
-        if (form.confirmPassword !== form.password) {
-            newErrors.confirmPassword = "Passwords must match";
+        if (!form.confirmPassword) {
+            newErrors.confirmPassword = "Confirm your password";
+        } else if (form.confirmPassword !== form.password) {
+            newErrors.confirmPassword = "Passwords do not match";
         }
 
         return newErrors;
@@ -82,7 +94,15 @@ export default function SignupPage() {
             }, 1000);
         } catch (error) {
             setSuccess(false);
-            setMessage(error.response?.data?.message || "Signup failed");
+            if (error.response?.data?.message) {
+                setMessage(error.response.data.message);
+            } else if (error.request) {
+                setMessage(
+                    `Cannot reach backend at ${api.defaults.baseURL}. Check Wi-Fi and make sure the backend is running.`
+                );
+            } else {
+                setMessage("Signup failed. Please try again.");
+            }
         } finally {
             setSubmitting(false);
         }
@@ -160,6 +180,9 @@ export default function SignupPage() {
                             className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
                             placeholder="Create password"
                         />
+                        <p className="mt-2 text-sm text-slate-500">
+                            Must include uppercase, lowercase, and a number
+                        </p>
                         {errors.password && (
                             <p className="mt-2 text-sm text-red-600">{errors.password}</p>
                         )}

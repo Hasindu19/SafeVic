@@ -4,6 +4,12 @@ import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import {
+    formatSeverity,
+    formatStatus,
+    severityStyles,
+    statusStyles,
+} from "../utils/reportPresentation.js";
 import "leaflet/dist/leaflet.css";
 
 const incidentIcon = new L.Icon({
@@ -21,22 +27,37 @@ export default function IncidentDetailsPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
+    const [statusHistory, setStatusHistory] = useState([]);
 
     useEffect(() => {
+        const fetchIncident = async () => {
+            try {
+                const res = await api.get(`/reports/${id}`);
+                setIncident(res.data);
+                setLoading(false);
+            } catch (error) {
+                console.error(error);
+                setError("Failed to load incident details");
+                setLoading(false);
+            }
+        };
+
         fetchIncident();
     }, [id]);
 
-    const fetchIncident = async () => {
-        try {
-            const res = await api.get(`/reports/${id}`);
-            setIncident(res.data);
-            setLoading(false);
-        } catch (error) {
-            console.error(error);
-            setError("Failed to load incident details");
-            setLoading(false);
+    useEffect(() => {
+        if (!user) {
+            return;
         }
-    };
+
+        api.get(`/reports/${id}/status-history`)
+            .then((result) => setStatusHistory(result.data))
+            .catch((historyError) => {
+                if (historyError.response?.status !== 403) {
+                    console.error("Unable to load status history:", historyError);
+                }
+            });
+    }, [id, user]);
 
     const handleStatusChange = async (newStatus) => {
         try {
@@ -54,6 +75,8 @@ export default function IncidentDetailsPage() {
 
             setIncident(res.data.report);
             setStatusMessage("Status updated successfully");
+            const historyResult = await api.get(`/reports/${incident.id}/status-history`);
+            setStatusHistory(historyResult.data);
         } catch (error) {
             console.error(error);
             setStatusMessage(
@@ -88,21 +111,27 @@ export default function IncidentDetailsPage() {
 
     return (
         <div className="space-y-6">
-            <section className="card p-7">
+            <section className="card p-5 sm:p-7">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
                         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-600">
                             Incident Details
                         </p>
-                        <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-900">
+                        <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
                             {incident.incident_type}
                         </h1>
-                        <p className="mt-3 text-slate-500">
-                            Full incident information and focused location view.
-                        </p>
+                        <div className="mt-4 flex flex-wrap items-center gap-3">
+                            <span className={`rounded-full px-3 py-1.5 text-sm font-semibold ${statusStyles[incident.status] || "bg-slate-100 text-slate-700"}`}>
+                                {formatStatus(incident.status)}
+                            </span>
+                            <span className={`rounded-full px-3 py-1.5 text-sm font-semibold ${severityStyles[incident.severity] || severityStyles.medium}`}>
+                                {formatSeverity(incident.severity)} severity
+                            </span>
+                            <span className="text-sm text-slate-500">Report #{incident.id}</span>
+                        </div>
                     </div>
 
-                    <Link to="/" className="btn-secondary">
+                    <Link to="/map" className="btn-secondary">
                         Back to Map
                     </Link>
                 </div>
@@ -114,77 +143,79 @@ export default function IncidentDetailsPage() {
                 </div>
             )}
 
-            <div className="grid gap-6 lg:grid-cols-2">
-                <section className="card p-6 space-y-5">
-                    <div>
-                        <p className="text-sm text-slate-500">Incident Type</p>
-                        <p className="mt-1 text-lg font-semibold text-slate-900">
-                            {incident.incident_type}
-                        </p>
+            <div className="grid gap-6 lg:grid-cols-[1.03fr_0.97fr]">
+                <section className="space-y-5">
+                    <div className="card p-5 sm:p-6">
+                        <h2 className="text-lg font-semibold text-slate-900">Incident Summary</h2>
+                        <p className="mt-4 leading-7 text-slate-700">{incident.description}</p>
+                        {incident.image_url && (
+                            <img
+                                src={incident.image_url}
+                                alt="Incident attachment"
+                                className="mt-5 max-h-80 w-full rounded-xl object-cover"
+                            />
+                        )}
                     </div>
 
-                    <div>
-                        <p className="text-sm text-slate-500">Description</p>
-                        <p className="mt-1 text-slate-800">
-                            {incident.description}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm text-slate-500">Suburb</p>
-                        <p className="mt-1 text-slate-800">
-                            {incident.suburb}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm text-slate-500">Incident Time</p>
-                        <p className="mt-1 text-slate-800">
-                            {new Date(incident.incident_time).toLocaleString()}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm text-slate-500">Created At</p>
-                        <p className="mt-1 text-slate-800">
-                            {new Date(incident.created_at).toLocaleString()}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm text-slate-500">Status</p>
-
-                        {user?.role === "police_admin" ? (
+                    {user?.role === "police_admin" && (
+                        <div className="card p-5 sm:p-6">
+                            <label className="text-sm font-semibold text-slate-700" htmlFor="incident-status">
+                                Update Incident Status
+                            </label>
+                            <p className="mt-1 text-sm text-slate-500">Track review progress for community visibility.</p>
                             <select
+                                id="incident-status"
                                 value={incident.status}
                                 onChange={(e) => handleStatusChange(e.target.value)}
-                                className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 outline-none focus:border-cyan-500"
+                                className="mt-4 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
                             >
                                 <option value="pending">Pending</option>
                                 <option value="under_review">Under Review</option>
                                 <option value="resolved">Resolved</option>
                             </select>
-                        ) : (
-                            <span className="mt-2 inline-block rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
-                {incident.status}
-              </span>
-                        )}
+                        </div>
+                    )}
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        {[
+                            ["Incident Type", incident.incident_type],
+                            ["Suburb", incident.suburb],
+                            ["Severity", formatSeverity(incident.severity)],
+                            ["Incident Time", new Date(incident.incident_time).toLocaleString()],
+                            ["Created Date", new Date(incident.created_at).toLocaleString()],
+                            ["Anonymous", incident.is_anonymous ? "Yes" : "No"],
+                            ["Coordinates", `${Number(incident.latitude).toFixed(6)}, ${Number(incident.longitude).toFixed(6)}`],
+                        ].map(([label, value]) => (
+                            <div key={label} className="card p-4">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                                <p className="mt-2 break-words font-medium text-slate-900">{value}</p>
+                            </div>
+                        ))}
                     </div>
 
-                    <div>
-                        <p className="text-sm text-slate-500">Anonymous</p>
-                        <p className="mt-1 text-slate-800">
-                            {incident.is_anonymous ? "Yes" : "No"}
-                        </p>
-                    </div>
-
-                    <div>
-                        <p className="text-sm text-slate-500">Coordinates</p>
-                        <p className="mt-1 text-slate-800">
-                            {Number(incident.latitude).toFixed(6)},{" "}
-                            {Number(incident.longitude).toFixed(6)}
-                        </p>
-                    </div>
+                    {user && (
+                        <div className="card p-5 sm:p-6">
+                            <h2 className="text-lg font-semibold text-slate-900">Status Timeline</h2>
+                            <div className="mt-5 space-y-5 border-l-2 border-slate-200 pl-5">
+                                {(statusHistory.length > 0
+                                    ? statusHistory
+                                    : [{ id: "current", new_status: incident.status, created_at: incident.created_at }]
+                                ).map((historyItem) => (
+                                    <div key={historyItem.id} className="relative">
+                                        <span className="absolute -left-[27px] top-1.5 h-3 w-3 rounded-full bg-cyan-600 ring-4 ring-white" />
+                                        <p className="font-semibold text-slate-900">
+                                            {historyItem.old_status
+                                                ? `${formatStatus(historyItem.old_status)} to ${formatStatus(historyItem.new_status)}`
+                                                : `Created as ${formatStatus(historyItem.new_status)}`}
+                                        </p>
+                                        <p className="mt-1 text-sm text-slate-500">
+                                            {new Date(historyItem.created_at).toLocaleString()}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </section>
 
                 <section className="card p-4">
@@ -193,7 +224,7 @@ export default function IncidentDetailsPage() {
                             center={[Number(incident.latitude), Number(incident.longitude)]}
                             zoom={15}
                             scrollWheelZoom={true}
-                            className="h-[500px] w-full"
+                            className="h-[360px] w-full sm:h-[460px] lg:h-[590px]"
                         >
                             <TileLayer
                                 attribution="&copy; OpenStreetMap contributors"
@@ -205,13 +236,16 @@ export default function IncidentDetailsPage() {
                                 icon={incidentIcon}
                             >
                                 <Popup>
-                                    <div className="w-[190px] space-y-2 px-0.5 text-center">
+                                    <div className="w-[190px] max-w-[70vw] space-y-2 px-0.5 text-center">
                                         <p className="font-semibold text-slate-900">
                                             {incident.incident_type}
                                         </p>
 
                                         <p className="text-sm text-slate-700">
                                             {incident.suburb}
+                                        </p>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                            Severity: {formatSeverity(incident.severity)}
                                         </p>
 
                                         <p className="text-sm text-slate-500">

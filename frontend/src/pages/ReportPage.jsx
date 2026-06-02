@@ -1,5 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import api from "../services/api.js";
+import {
+    getCurrentLocation,
+    getLocationErrorMessage,
+} from "../services/location.js";
 import {
     MapContainer,
     TileLayer,
@@ -22,12 +26,15 @@ const userBlueDotIcon = L.divIcon({
     iconAnchor: [10, 10],
 });
 
-// Marker for selected incident location
-const selectedLocationIcon = new L.Icon({
-    iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-    shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
+const selectedLocationIcon = L.divIcon({
+    className: "selected-incident-marker-wrapper",
+    html: `
+        <div class="selected-incident-marker">
+            <span class="selected-incident-marker-dot"></span>
+        </div>
+    `,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
 });
 
 // Fast smooth map movement
@@ -70,9 +77,13 @@ function MapController({ center, zoom, triggerKey }) {
 
 // Reverse geocoding to auto-fill suburb
 const reverseGeocodeSuburb = async (lat, lng) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     try {
         const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
+            { signal: controller.signal }
         );
 
         const data = await res.json();
@@ -88,6 +99,8 @@ const reverseGeocodeSuburb = async (lat, lng) => {
     } catch (error) {
         console.error("Reverse geocoding failed:", error);
         return "";
+    } finally {
+        clearTimeout(timeoutId);
     }
 };
 
@@ -110,30 +123,63 @@ const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
     return R * c;
 };
 
+const CATEGORY_KEYWORDS = [
+    { category: "Car Theft", keywords: ["car", "vehicle", "plate", "stolen", "parked"] },
+    { category: "Assault", keywords: ["fight", "assault", "attack", "punched"] },
+    { category: "Burglary", keywords: ["break in", "house", "door", "window"] },
+    { category: "Vandalism", keywords: ["graffiti", "damage", "smashed"] },
+    { category: "Suspicious Activity", keywords: ["suspicious", "following", "unknown person"] },
+];
+
 // Click map to choose incident location
 function LocationPicker({ setForm, selectedPosition, setErrors }) {
     useMapEvents({
         async click(e) {
             const { lat, lng } = e.latlng;
-            const suburbName = await reverseGeocodeSuburb(lat, lng);
 
             setForm((prev) => ({
                 ...prev,
                 latitude: lat,
                 longitude: lng,
-                suburb: suburbName || prev.suburb,
             }));
 
             setErrors((prev) => ({
                 ...prev,
                 location: "",
+            }));
+
+            const suburbName = await reverseGeocodeSuburb(lat, lng);
+
+            if (!suburbName) {
+                return;
+            }
+
+            setForm((prev) => ({
+                ...prev,
+                suburb: suburbName,
+            }));
+
+            setErrors((prev) => ({
+                ...prev,
                 suburb: "",
             }));
         },
     });
 
     return selectedPosition ? (
-        <Marker position={selectedPosition} icon={selectedLocationIcon} />
+        <>
+            <Circle
+                center={selectedPosition}
+                radius={45}
+                pathOptions={{
+                    color: "#0891b2",
+                    fillColor: "#22d3ee",
+                    fillOpacity: 0.2,
+                    weight: 2,
+                }}
+            />
+            <Marker position={selectedPosition} icon={selectedLocationIcon} />
+        </>
     ) : null;
 }
 
@@ -146,10 +192,16 @@ export default function ReportPage() {
         longitude: "",
         incident_time: "",
         is_anonymous: false,
+        severity: "medium",
     });
 
     const [errors, setErrors] = useState({});
     const [message, setMessage] = useState("");
+    const [submitted, setSubmitted] = useState(false);
+    const [categorySuggestion, setCategorySuggestion] = useState("");
+    const [image, setImage] = useState(null);
+    const [imagePreview, setImagePreview] = useState("");
+    const [imageInputKey, setImageInputKey] = useState(0);
 
     const [userLocation, setUserLocation] = useState(defaultCenter);
     const [hasRealLocation, setHasRealLocation] = useState(false);
@@ -159,62 +211,52 @@ export default function ReportPage() {
     const [recenterTarget, setRecenterTarget] = useState(defaultCenter);
     const [recenterKey, setRecenterKey] = useState(0);
 
-    useEffect(() => {
-        getUserLocation(true);
-    }, []);
-
-    const recenterMapTo = (coords) => {
+    const recenterMapTo = useCallback((coords) => {
         setRecenterTarget([...coords]);
         setRecenterKey((prev) => prev + 1);
-    };
+    }, []);
 
-    const getUserLocation = (autoCenter = false) => {
-        if (!navigator.geolocation) {
-            setLocationError("Geolocation is not supported by your browser.");
-            setLoadingLocation(false);
-            return;
-        }
-
+    const getUserLocation = useCallback(async (autoCenter = false) => {
         setLoadingLocation(true);
         setLocationError("");
 
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const coords = [
-                    position.coords.latitude,
-                    position.coords.longitude,
-                ];
+        try {
+            const { coords } = await getCurrentLocation({
+                highAccuracy: false,
+                timeout: 5000,
+                maximumAge: 60000,
+            });
 
-                setUserLocation(coords);
-                setHasRealLocation(true);
-                setLoadingLocation(false);
+            setUserLocation(coords);
+            setHasRealLocation(true);
 
-                if (autoCenter) {
-                    recenterMapTo(coords);
-                }
-            },
-            (error) => {
-                console.error("Location error:", error);
-                setLoadingLocation(false);
-                setHasRealLocation(false);
-
-                if (error.code === 1) {
-                    setLocationError("Location access was denied.");
-                } else if (error.code === 2) {
-                    setLocationError("Unable to detect your location.");
-                } else if (error.code === 3) {
-                    setLocationError("Location request timed out.");
-                } else {
-                    setLocationError("Could not get your current location.");
-                }
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 0,
+            if (autoCenter) {
+                recenterMapTo(coords);
             }
-        );
-    };
+        } catch (error) {
+            console.error("Location error:", error);
+            setHasRealLocation(false);
+            setLocationError(getLocationErrorMessage(error));
+        } finally {
+            setLoadingLocation(false);
+        }
+    }, [recenterMapTo]);
+
+    useEffect(() => {
+        getUserLocation(true);
+    }, [getUserLocation]);
+
+    useEffect(() => {
+        if (!image) return undefined;
+
+        const reader = new FileReader();
+        const handleLoad = () => setImagePreview(String(reader.result || ""));
+
+        reader.addEventListener("load", handleLoad);
+        reader.readAsDataURL(image);
+
+        return () => reader.removeEventListener("load", handleLoad);
+    }, [image]);
 
     // Only move map back to current user location
     const handleRecenterMap = () => {
@@ -224,62 +266,53 @@ export default function ReportPage() {
     };
 
     // Use current user location as incident location
-    const handleUseMyCurrentLocation = () => {
-        if (!navigator.geolocation) {
-            setLocationError("Geolocation is not supported by your browser.");
-            return;
-        }
-
+    const handleUseMyCurrentLocation = async () => {
         setLoadingLocation(true);
         setLocationError("");
 
-        navigator.geolocation.getCurrentPosition(
-            async (position) => {
-                const lat = position.coords.latitude;
-                const lng = position.coords.longitude;
-                const coords = [lat, lng];
+        try {
+            const { coords } = await getCurrentLocation({
+                highAccuracy: false,
+                timeout: 5000,
+                maximumAge: 60000,
+            });
+            const [lat, lng] = coords;
 
-                const suburbName = await reverseGeocodeSuburb(lat, lng);
+            setUserLocation(coords);
+            setHasRealLocation(true);
+            setLoadingLocation(false);
 
-                setUserLocation(coords);
-                setHasRealLocation(true);
-                setLoadingLocation(false);
+            setForm((prev) => ({
+                ...prev,
+                latitude: lat,
+                longitude: lng,
+            }));
 
+            recenterMapTo(coords);
+
+            setErrors((prev) => ({
+                ...prev,
+                location: "",
+            }));
+
+            const suburbName = await reverseGeocodeSuburb(lat, lng);
+
+            if (suburbName) {
                 setForm((prev) => ({
                     ...prev,
-                    latitude: lat,
-                    longitude: lng,
-                    suburb: suburbName || prev.suburb,
+                    suburb: suburbName,
                 }));
-
-                recenterMapTo(coords);
 
                 setErrors((prev) => ({
                     ...prev,
-                    location: "",
                     suburb: "",
                 }));
-            },
-            (error) => {
-                console.error("Use current location error:", error);
-                setLoadingLocation(false);
-
-                if (error.code === 1) {
-                    setLocationError("Location access was denied.");
-                } else if (error.code === 2) {
-                    setLocationError("Unable to detect your location.");
-                } else if (error.code === 3) {
-                    setLocationError("Location request timed out.");
-                } else {
-                    setLocationError("Could not get your current location.");
-                }
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 0,
             }
-        );
+        } catch (error) {
+            console.error("Use current location error:", error);
+            setLoadingLocation(false);
+            setLocationError(getLocationErrorMessage(error));
+        }
     };
 
     const handleChange = (e) => {
@@ -297,6 +330,37 @@ export default function ReportPage() {
         }));
 
         setMessage("");
+        setSubmitted(false);
+
+        if (name === "description") {
+            setCategorySuggestion("");
+        }
+    };
+
+    const handleSuggestCategory = () => {
+        const description = form.description.toLowerCase();
+        const match = CATEGORY_KEYWORDS.find(({ keywords }) =>
+            keywords.some((keyword) => description.includes(keyword))
+        );
+
+        if (!match) {
+            setCategorySuggestion("No keyword match found. Please choose the most appropriate category.");
+            return;
+        }
+
+        setForm((current) => ({ ...current, incident_type: match.category }));
+        setErrors((current) => ({ ...current, incident_type: "" }));
+        setCategorySuggestion(
+            `Suggested category: ${match.category}. Suggested from description keywords. Please confirm before submitting.`
+        );
+    };
+
+    const handleImageChange = (event) => {
+        const selectedImage = event.target.files?.[0] || null;
+        setImage(selectedImage);
+        if (!selectedImage) setImagePreview("");
+        setMessage("");
+        setSubmitted(false);
     };
 
     const validateForm = () => {
@@ -325,6 +389,15 @@ export default function ReportPage() {
         return newErrors;
     };
 
+    const scrollToTop = () => {
+        window.requestAnimationFrame(() => {
+            window.scrollTo({
+                top: 0,
+                behavior: "smooth",
+            });
+        });
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -333,27 +406,33 @@ export default function ReportPage() {
         if (Object.keys(validationErrors).length > 0) {
             setErrors(validationErrors);
             setMessage("");
+            setSubmitted(false);
+            scrollToTop();
             return;
         }
 
         try {
-            const token = localStorage.getItem("safevic_token");
+            const payload = {
+                ...form,
+                latitude: Number(form.latitude),
+                longitude: Number(form.longitude),
+            };
+            let requestBody = payload;
 
-            const res = await api.post(
-                "/reports",
-                {
-                    ...form,
-                    latitude: Number(form.latitude),
-                    longitude: Number(form.longitude),
-                },
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                    },
-                }
-            );
+            if (image) {
+                requestBody = new FormData();
+
+                Object.entries(payload).forEach(([key, value]) => {
+                    requestBody.append(key, String(value));
+                });
+
+                requestBody.append("image", image);
+            }
+
+            const res = await api.post("/reports", requestBody);
 
             setMessage(res.data.message || "Report submitted successfully");
+            setSubmitted(true);
             setErrors({});
 
             setForm({
@@ -364,15 +443,23 @@ export default function ReportPage() {
                 longitude: "",
                 incident_time: "",
                 is_anonymous: false,
+                severity: "medium",
             });
+            setCategorySuggestion("");
+            setImage(null);
+            setImageInputKey((current) => current + 1);
 
             if (hasRealLocation) {
                 recenterMapTo(userLocation);
             } else {
                 recenterMapTo(defaultCenter);
             }
+
+            scrollToTop();
         } catch (error) {
             setMessage(error.response?.data?.message || "Failed to submit report");
+            setSubmitted(false);
+            scrollToTop();
         }
     };
 
@@ -392,10 +479,10 @@ export default function ReportPage() {
             : null;
 
     return (
-        <div className="max-w-3xl mx-auto">
-            <div className="bg-white rounded-2xl shadow-lg p-8">
+        <div className="mx-auto w-full max-w-3xl">
+            <div className="card p-4 sm:p-6 md:p-8">
                 <div className="mb-6">
-                    <h2 className="text-3xl font-bold text-slate-800 mb-2">
+                    <h2 className="text-2xl font-bold text-slate-800 mb-2 md:text-3xl">
                         Report an Incident
                     </h2>
                     <p className="text-slate-500">
@@ -405,7 +492,7 @@ export default function ReportPage() {
                 </div>
 
                 {message && (
-                    <div className="mb-6 rounded-lg bg-blue-100 text-blue-800 px-4 py-3">
+                    <div className={`mb-6 rounded-xl border px-4 py-3 ${submitted ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
                         {message}
                     </div>
                 )}
@@ -446,9 +533,36 @@ export default function ReportPage() {
                             placeholder="Describe what happened"
                             className="w-full border border-slate-300 rounded-lg px-4 py-3 min-h-[120px] focus:outline-none focus:ring-2 focus:ring-cyan-500"
                         />
+                        <div className="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+                            <button
+                                type="button"
+                                onClick={handleSuggestCategory}
+                                className="btn-secondary px-4 py-2 text-sm"
+                            >
+                                Suggest Category
+                            </button>
+                            {categorySuggestion && (
+                                <p className="text-sm text-cyan-700">{categorySuggestion}</p>
+                            )}
+                        </div>
                         {errors.description && (
                             <p className="text-red-500 text-sm mt-1">{errors.description}</p>
                         )}
+                    </div>
+
+                    <div>
+                        <label className="block mb-2 font-medium">Severity</label>
+                        <select
+                            name="severity"
+                            value={form.severity}
+                            onChange={handleChange}
+                            className="w-full border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                        >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                        </select>
                     </div>
 
                     <div>
@@ -480,14 +594,35 @@ export default function ReportPage() {
                     </div>
 
                     <div>
+                        <label className="block mb-2 font-medium">Photo Evidence (optional)</label>
+                        <input
+                            key={imageInputKey}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageChange}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm"
+                        />
+                        <p className="mt-2 text-sm text-slate-500">Upload one image, up to 5 MB.</p>
+                        {imagePreview && (
+                            <img
+                                src={imagePreview}
+                                alt="Selected incident preview"
+                                className="mt-4 h-48 w-full rounded-xl object-cover sm:w-72"
+                            />
+                        )}
+                    </div>
+
+                    <div>
                         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-2">
                             <label className="block font-medium">Select Incident Location</label>
 
-                            <div className="flex gap-3 flex-wrap">
+                            <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap md:w-auto">
                                 <button
                                     type="button"
                                     onClick={handleRecenterMap}
-                                    className="btn-secondary"
+                                    className="btn-secondary w-full sm:w-auto"
+                                    aria-label="Recenter the incident map"
+                                    title="Recenter map"
                                 >
                                     Recenter Map
                                 </button>
@@ -495,11 +630,18 @@ export default function ReportPage() {
                                 <button
                                     type="button"
                                     onClick={handleUseMyCurrentLocation}
-                                    className="btn-primary"
+                                    className="btn-primary w-full sm:w-auto"
+                                    aria-label="Use my current location as the incident location"
+                                    title="Use my current location"
                                 >
                                     {loadingLocation ? "Locating..." : "Use My Current Location"}
                                 </button>
                             </div>
+                        </div>
+
+                        <div className="mb-4 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+                            <span className="font-semibold">Location tip:</span>{" "}
+                            Tap on the map to choose the exact incident location.
                         </div>
 
                         <div className="relative z-0 rounded-xl overflow-hidden border border-slate-300">
@@ -507,7 +649,10 @@ export default function ReportPage() {
                                 center={defaultCenter}
                                 zoom={13}
                                 scrollWheelZoom={true}
-                                className="h-[420px] md:h-[500px] w-full"
+                                touchZoom={true}
+                                dragging={true}
+                                tap={true}
+                                className="h-[360px] md:h-[500px] w-full"
                             >
                                 <TileLayer
                                     attribution="&copy; OpenStreetMap contributors"
@@ -576,7 +721,7 @@ export default function ReportPage() {
 
                     <button
                         type="submit"
-                        className="w-full bg-slate-900 text-white py-3 rounded-lg font-semibold hover:bg-slate-800 transition"
+                        className="btn-primary w-full"
                     >
                         Submit Report
                     </button>

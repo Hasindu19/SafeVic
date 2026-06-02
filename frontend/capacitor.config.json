@@ -1,0 +1,10 @@
+{
+  "appId": "com.safevic.app",
+  "appName": "SafeVic",
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

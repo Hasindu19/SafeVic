@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext.jsx";
+import {
+    formatSeverity,
+    formatStatus,
+    severityStyles,
+    statusStyles,
+} from "../utils/reportPresentation.js";
 
 export default function MyReportsPage() {
     const [reports, setReports] = useState([]);
@@ -44,11 +50,11 @@ export default function MyReportsPage() {
 
     return (
         <div className="space-y-6">
-            <section className="card p-7">
+            <section className="card p-5 sm:p-7">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-600">
                     My Activity
                 </p>
-                <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-900">
+                <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
                     My Reports
                 </h1>
                 <p className="mt-3 max-w-2xl text-slate-500">
@@ -67,12 +73,13 @@ export default function MyReportsPage() {
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="min-w-full">
+                    <table className="min-w-[900px] w-full">
                         <thead className="bg-slate-50">
                         <tr className="text-left text-sm text-slate-500">
                             <th className="px-6 py-4 font-medium">ID</th>
                             <th className="px-6 py-4 font-medium">Type</th>
                             <th className="px-6 py-4 font-medium">Suburb</th>
+                            <th className="px-6 py-4 font-medium">Severity</th>
                             <th className="px-6 py-4 font-medium">Status</th>
                             <th className="px-6 py-4 font-medium">Date</th>
                             <th className="px-6 py-4 font-medium">Action</th>
@@ -91,20 +98,27 @@ export default function MyReportsPage() {
                                     </td>
                                     <td className="px-6 py-4">{report.suburb}</td>
                                     <td className="px-6 py-4">
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-                        {report.status}
+                                        <span className={`rounded-full px-3 py-1 text-xs font-medium ${severityStyles[report.severity] || severityStyles.medium}`}>
+                                            {formatSeverity(report.severity)}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4">
+                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[report.status] || "bg-slate-100 text-slate-700"}`}>
+                        {formatStatus(report.status)}
                       </span>
                                     </td>
                                     <td className="px-6 py-4">
                                         {new Date(report.created_at).toLocaleString()}
+                                        {report.image_url && (
+                                            <span className="ml-2 rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">Photo</span>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4">
                                         <Link
                                             to={`/incidents/${report.id}`}
-                                            className="inline-flex items-center justify-center rounded-lg bg-cyan-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-cyan-700"
-                                            style={{ color: "#ffffff", textDecoration: "none" }}
+                                            className="btn-primary px-3 py-2 text-sm"
                                         >
-                                            View
+                                            View Details
                                         </Link>
                                     </td>
                                 </tr>
@@ -112,7 +126,7 @@ export default function MyReportsPage() {
                         ) : (
                             <tr>
                                 <td
-                                    colSpan="6"
+                                    colSpan="7"
                                     className="px-6 py-8 text-center text-slate-500"
                                 >
                                     You have not submitted any reports yet.

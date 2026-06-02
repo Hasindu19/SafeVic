@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import api from "../services/api.js";
+import {
+    clearLocationWatch,
+    getCurrentLocation,
+    getLocationErrorMessage,
+    watchCurrentLocation,
+} from "../services/location.js";
 import {
     MapContainer,
     TileLayer,
@@ -11,6 +17,10 @@ import {
 } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
+import {
+    formatSeverity,
+    severityStyles,
+} from "../utils/reportPresentation.js";
 import "leaflet/dist/leaflet.css";
 
 
@@ -129,6 +139,7 @@ export default function MapPage() {
     const [loadingLocation, setLoadingLocation] = useState(true);
     const [locationError, setLocationError] = useState("");
     const [radiusKm, setRadiusKm] = useState(5);
+    const [heatmapEnabled, setHeatmapEnabled] = useState(false);
 
     const [recenterTarget, setRecenterTarget] = useState(defaultCenter);
     const [recenterKey, setRecenterKey] = useState(0);
@@ -138,10 +149,98 @@ export default function MapPage() {
     const navigate = useNavigate();
     const watchIdRef = useRef(null);
 
+    const fetchReports = useCallback(async () => {
+        try {
+            const res = await api.get("/reports");
+            setReports(res.data);
+        } catch (error) {
+            console.error("Failed to fetch reports:", error);
+        }
+    }, []);
+
+    const recenterMapTo = useCallback((coords) => {
+        setRecenterTarget([...coords]);
+        setRecenterKey((prev) => prev + 1);
+    }, []);
+
+    const getUserLocation = useCallback(async (autoCenter = false) => {
+        setLoadingLocation(true);
+        setLocationError("");
+
+        try {
+            const { coords } = await getCurrentLocation({
+                highAccuracy: false,
+                timeout: 5000,
+                maximumAge: 60000,
+            });
+
+            setUserLocation(coords);
+            setHasRealLocation(true);
+
+            if (autoCenter) {
+                recenterMapTo(coords);
+            }
+        } catch (error) {
+            console.error("Location error:", error);
+            setHasRealLocation(false);
+            setLocationError(getLocationErrorMessage(error));
+        } finally {
+            setLoadingLocation(false);
+        }
+    }, [recenterMapTo]);
+
+    const stopFollowingLocation = useCallback(() => {
+        if (watchIdRef.current !== null) {
+            clearLocationWatch(watchIdRef.current).catch((error) => {
+                console.error("Clear location watch error:", error);
+            });
+            watchIdRef.current = null;
+        }
+    }, []);
+
+    const startFollowingLocation = useCallback(() => {
+        stopFollowingLocation();
+        setLocationError("");
+
+        watchCurrentLocation(
+            ({ coords }) => {
+                setUserLocation(coords);
+                setHasRealLocation(true);
+                setLoadingLocation(false);
+
+                recenterMapTo(coords);
+            },
+            (error) => {
+                console.error("Follow location error:", error);
+
+                setLocationError(
+                    getLocationErrorMessage(error, "Could not follow your location.")
+                );
+
+                setFollowMe(false);
+            },
+            {
+                highAccuracy: true,
+                maximumAge: 5000,
+                timeout: 8000,
+            }
+        )
+            .then((watchId) => {
+                watchIdRef.current = watchId;
+            })
+            .catch((error) => {
+                console.error("Start follow location error:", error);
+                setLocationError(
+                    getLocationErrorMessage(error, "Could not follow your location.")
+                );
+                setFollowMe(false);
+            });
+    }, [recenterMapTo, stopFollowingLocation]);
+
     useEffect(() => {
         fetchReports();
         getUserLocation(true);
-    }, []);
+    }, [fetchReports, getUserLocation]);
 
     useEffect(() => {
         if (followMe) {
@@ -153,122 +252,7 @@ export default function MapPage() {
         return () => {
             stopFollowingLocation();
         };
-    }, [followMe]);
-
-    const fetchReports = async () => {
-        try {
-            const res = await api.get("/reports");
-            setReports(res.data);
-        } catch (error) {
-            console.error("Failed to fetch reports:", error);
-        }
-    };
-
-    const recenterMapTo = (coords) => {
-        setRecenterTarget([...coords]);
-        setRecenterKey((prev) => prev + 1);
-    };
-
-    const getUserLocation = (autoCenter = false) => {
-        if (!navigator.geolocation) {
-            setLocationError("Geolocation is not supported by your browser.");
-            setLoadingLocation(false);
-            return;
-        }
-
-        setLoadingLocation(true);
-        setLocationError("");
-
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const coords = [
-                    position.coords.latitude,
-                    position.coords.longitude,
-                ];
-
-                setUserLocation(coords);
-                setHasRealLocation(true);
-                setLoadingLocation(false);
-
-                if (autoCenter) {
-                    recenterMapTo(coords);
-                }
-            },
-            (error) => {
-                console.error("Location error:", error);
-                setLoadingLocation(false);
-                setHasRealLocation(false);
-
-                if (error.code === 1) {
-                    setLocationError("Location access was denied.");
-                } else if (error.code === 2) {
-                    setLocationError("Unable to detect your location.");
-                } else if (error.code === 3) {
-                    setLocationError("Location request timed out.");
-                } else {
-                    setLocationError("Could not get your current location.");
-                }
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 0,
-            }
-        );
-    };
-
-    const startFollowingLocation = () => {
-        if (!navigator.geolocation) {
-            setLocationError("Geolocation is not supported by your browser.");
-            setFollowMe(false);
-            return;
-        }
-
-        stopFollowingLocation();
-        setLocationError("");
-
-        watchIdRef.current = navigator.geolocation.watchPosition(
-            (position) => {
-                const coords = [
-                    position.coords.latitude,
-                    position.coords.longitude,
-                ];
-
-                setUserLocation(coords);
-                setHasRealLocation(true);
-                setLoadingLocation(false);
-
-                recenterMapTo(coords);
-            },
-            (error) => {
-                console.error("Follow location error:", error);
-
-                if (error.code === 1) {
-                    setLocationError("Location access was denied.");
-                } else if (error.code === 2) {
-                    setLocationError("Unable to detect your location.");
-                } else if (error.code === 3) {
-                    setLocationError("Location request timed out.");
-                } else {
-                    setLocationError("Could not follow your location.");
-                }
-
-                setFollowMe(false);
-            },
-            {
-                enableHighAccuracy: true,
-                maximumAge: 2000,
-                timeout: 10000,
-            }
-        );
-    };
-
-    const stopFollowingLocation = () => {
-        if (watchIdRef.current !== null) {
-            navigator.geolocation.clearWatch(watchIdRef.current);
-            watchIdRef.current = null;
-        }
-    };
+    }, [followMe, startFollowingLocation, stopFollowingLocation]);
 
     const handleLocateMe = () => {
         getUserLocation(true);
@@ -293,6 +277,30 @@ export default function MapPage() {
     }, [reports, hasRealLocation, userLocation, radiusKm]);
 
     const anonymousCount = nearbyReports.filter((r) => r.is_anonymous).length;
+    const heatmapPoints = useMemo(() => {
+        const groupedPoints = new Map();
+
+        nearbyReports.forEach((report) => {
+            const latitude = Number(report.latitude);
+            const longitude = Number(report.longitude);
+
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return;
+            }
+
+            const key = `${latitude.toFixed(4)}:${longitude.toFixed(4)}`;
+            const current = groupedPoints.get(key);
+
+            if (current) {
+                current.intensity += 1;
+                return;
+            }
+
+            groupedPoints.set(key, { latitude, longitude, intensity: 1 });
+        });
+
+        return [...groupedPoints.values()];
+    }, [nearbyReports]);
 
     return (
         <div className="space-y-6">
@@ -355,11 +363,11 @@ export default function MapPage() {
                             </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
                             <select
                                 value={radiusKm}
                                 onChange={(e) => setRadiusKm(Number(e.target.value))}
-                                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-700 shadow-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
+                                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-700 shadow-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200 sm:w-auto"
                             >
                                 <option value={1}>1 km</option>
                                 <option value={3}>3 km</option>
@@ -368,17 +376,29 @@ export default function MapPage() {
                                 <option value={20}>20 km</option>
                             </select>
 
-                            <button onClick={handleLocateMe} className="btn-primary">
+                            <button
+                                type="button"
+                                onClick={() => setHeatmapEnabled((enabled) => !enabled)}
+                                className={`${heatmapEnabled ? "btn-primary" : "btn-secondary"} min-h-12 w-full sm:w-auto`}
+                                aria-pressed={heatmapEnabled}
+                            >
+                                Heatmap: {heatmapEnabled ? "ON" : "OFF"}
+                            </button>
+
+                            <button
+                                onClick={handleLocateMe}
+                                className="btn-primary min-h-12 w-full sm:w-auto"
+                                aria-label="Locate my current position on the map"
+                                title="Locate my current position"
+                            >
                                 {loadingLocation ? "Locating..." : "Locate Me"}
                             </button>
 
                             <button
                                 onClick={handleToggleFollowMe}
-                                className={
-                                    followMe
-                                        ? "inline-flex items-center justify-center rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white shadow-md transition hover:bg-emerald-700"
-                                        : "btn-secondary"
-                                }
+                                className={`${followMe ? "btn-primary" : "btn-secondary"} min-h-12 w-full sm:w-auto`}
+                                aria-label={followMe ? "Stop following my location" : "Follow my location"}
+                                title={followMe ? "Stop following my location" : "Follow my location"}
                             >
                                 {followMe ? "Follow Me: ON" : "Follow Me: OFF"}
                             </button>
@@ -393,7 +413,10 @@ export default function MapPage() {
                             center={defaultCenter}
                             zoom={13}
                             scrollWheelZoom={true}
-                            className="h-[calc(100vh-180px)] min-h-[500px] w-full"
+                            touchZoom={true}
+                            dragging={true}
+                            tap={true}
+                            className="h-[calc(100vh-220px)] min-h-[420px] md:h-[calc(100vh-180px)] md:min-h-[500px] w-full"
                         >
                             <TileLayer
                                 attribution="&copy; OpenStreetMap contributors"
@@ -405,6 +428,23 @@ export default function MapPage() {
                                 zoom={15}
                                 triggerKey={recenterKey}
                             />
+
+                            {heatmapEnabled &&
+                                heatmapPoints.map((point) => (
+                                    // TODO: replace the density-circle fallback with a React 19 compatible heatmap layer when available.
+                                    <Circle
+                                        key={`heat-${point.latitude}-${point.longitude}`}
+                                        center={[point.latitude, point.longitude]}
+                                        radius={100 + point.intensity * 45}
+                                        interactive={false}
+                                        pathOptions={{
+                                            color: "#ef4444",
+                                            fillColor: point.intensity > 2 ? "#ef4444" : "#f59e0b",
+                                            fillOpacity: Math.min(0.18 + point.intensity * 0.1, 0.55),
+                                            weight: 0,
+                                        }}
+                                    />
+                                ))}
 
                             {hasRealLocation && (
                                 <>
@@ -434,8 +474,8 @@ export default function MapPage() {
                                         }
                                     >
                                         <Popup>
-                                            <div className="w-[190px] space-y-2 px-0.5 text-center">
-                                                <p className="font-semibold text-slate-900">
+                                            <div className="w-[190px] max-w-[70vw] space-y-2 px-0.5 text-center">
+                                                <p className="text-sm font-semibold text-slate-900">
                                                     {report.incident_type}
                                                 </p>
 
@@ -443,7 +483,19 @@ export default function MapPage() {
                                                     {report.suburb}
                                                 </p>
 
-                                                <p className="text-sm text-slate-500">
+                                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${severityStyles[report.severity] || severityStyles.medium}`}>
+                                                    {formatSeverity(report.severity)} severity
+                                                </span>
+
+                                                {report.image_url && (
+                                                    <img
+                                                        src={report.image_url}
+                                                        alt=""
+                                                        className="mx-auto h-20 w-full rounded-lg object-cover"
+                                                    />
+                                                )}
+
+                                                <p className="line-clamp-3 break-words text-sm text-slate-500">
                                                     {report.description}
                                                 </p>
 
@@ -468,7 +520,7 @@ export default function MapPage() {
 
                     <button
                         onClick={() => navigate("/report")}
-                        className="absolute bottom-8 right-8 z-[1000] flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-r from-cyan-600 to-blue-600 text-4xl text-white shadow-2xl transition hover:scale-110"
+                        className="absolute bottom-6 right-6 z-[1000] flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-r from-cyan-600 to-blue-600 text-4xl text-white shadow-2xl transition hover:scale-110 md:bottom-8 md:right-8"
                         aria-label="Report incident"
                         title="Report incident"
                     >

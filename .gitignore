@@ -1,2 +1,5 @@
 node_modules/
 backend/.env
+frontend/.env
+backend/firebase-service-account.json
+frontend/android/app/google-services.json

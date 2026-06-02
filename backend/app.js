@@ -3,6 +3,8 @@ const cors = require("cors");
 
 const reportRoutes = require("./src/routes/reportRoutes");
 const authRoutes = require("./src/routes/authRoutes");
+const pushTokenRoutes = require("./src/routes/pushTokenRoutes");
+const alertPreferenceRoutes = require("./src/routes/alertPreferenceRoutes");
 
 const { protect, authorize } = require("./src/middleware/authMiddleware");
 
@@ -14,6 +16,8 @@ app.use(express.json());
 
 app.use("/api/reports", reportRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/push-tokens", pushTokenRoutes);
+app.use("/api/alert-preferences", alertPreferenceRoutes);
 
 app.get("/", (req, res) => {
     res.send("SafeVic API is running...");

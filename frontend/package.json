@@ -7,9 +7,16 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:build": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^7.6.5",
+    "@capacitor/cli": "^7.6.2",
+    "@capacitor/core": "^7.6.2",
+    "@capacitor/geolocation": "^7.1.8",
+    "@capacitor/push-notifications": "^7.0.6",
     "axios": "^1.13.6",
     "leaflet": "^1.9.4",
     "react": "^19.2.4",

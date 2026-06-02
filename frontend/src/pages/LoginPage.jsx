@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { registerPushNotifications } from "../services/pushNotifications.js";
 
 export default function LoginPage() {
     const [form, setForm] = useState({
@@ -27,9 +28,10 @@ export default function LoginPage() {
         try {
             const res = await api.post("/auth/login", form);
             login(res.data.user, res.data.token);
+            registerPushNotifications();
 
             if (res.data.user.role === "community") {
-                navigate("/");
+                navigate("/map");
             } else {
                 navigate("/dashboard");
             }
